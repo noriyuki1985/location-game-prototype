@@ -2,12 +2,113 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>クリックゲーム</title>
-  <script src="script.js" defer></script>
-  <link rel="stylesheet" href="style.css">
+  <title>お弁当屋さん経営ゲーム</title>
+  <style>
+    /* 地図のスタイル */
+    #map {
+      height: 400px;
+      width: 100%;
+    }
+    /* 情報表示エリアのスタイル */
+    #info {
+      margin-top: 10px;
+    }
+    .button {
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+  </style>
 </head>
 <body>
-  <h1>スコア: <span id="score">0</span></h1>
-  <button id="click-btn">クリック！</button>
+  <h1>お弁当屋さん経営ゲーム</h1>
+  <!-- Google Mapsを表示するエリア -->
+  <div id="map"></div>
+
+  <!-- クリックした位置やお店建設、所持金の表示エリア -->
+  <div id="info">
+    <p>クリックした位置：<span id="latlng">なし</span></p>
+    <button id="buildStore" class="button" disabled>お店を建てる（建設費: 1000円）</button>
+    <p>所持金: <span id="money">10000</span> 円</p>
+  </div>
+
+  <script>
+    let map;
+    let selectedLatLng = null;
+    let funds = 10000;      // 初期の所持金
+    const storeCost = 1000; // お店を建てるための費用
+    let stores = [];        // 建てたお店の情報を格納する配列
+
+    // Google Mapsの初期化関数
+    function initMap() {
+      // 関東（東京）を中心に地図を表示
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 35.6895, lng: 139.6917 },
+        zoom: 10
+      });
+
+      // 地図クリック時の処理
+      map.addListener("click", (e) => {
+        selectedLatLng = e.latLng;
+        document.getElementById("latlng").textContent =
+          "緯度: " + selectedLatLng.lat().toFixed(4) +
+          ", 経度: " + selectedLatLng.lng().toFixed(4);
+        // クリックしたらお店建設ボタンを有効にする
+        document.getElementById("buildStore").disabled = false;
+      });
+    }
+
+    // お店建設ボタンのクリック処理
+    document.getElementById("buildStore").addEventListener("click", () => {
+      if (!selectedLatLng) {
+        alert("まずは地図をクリックして位置を選んでください！");
+        return;
+      }
+      if (funds < storeCost) {
+        alert("所持金が不足しています！");
+        return;
+      }
+
+      // 建設費を差し引く
+      funds -= storeCost;
+      updateFunds();
+
+      // お店のマーカーを地図上に追加
+      const marker = new google.maps.Marker({
+        position: selectedLatLng,
+        map: map,
+        title: "お弁当屋さん"
+      });
+
+      // 建設したお店の情報を保存
+      stores.push({ marker: marker, latLng: selectedLatLng });
+
+      // 建設後はボタンを無効にし、選択状態をリセット
+      document.getElementById("buildStore").disabled = true;
+      document.getElementById("latlng").textContent = "なし";
+      selectedLatLng = null;
+    });
+
+    // 所持金表示を更新する関数
+    function updateFunds() {
+      document.getElementById("money").textContent = funds;
+    }
+
+    // タイマー：1分ごとに「1日経過」として収入を計算
+    setInterval(() => {
+      let totalIncome = 0;
+      // 各お店からランダムな収入（例：100～500円）を加算
+      stores.forEach(() => {
+        const income = Math.floor(Math.random() * 401) + 100;
+        totalIncome += income;
+      });
+      funds += totalIncome;
+      updateFunds();
+      alert("1日経過！ 売上 " + totalIncome + " 円 が加算されました！");
+    }, 60000); // 60000ミリ秒 = 1分
+
+  </script>
+  <!-- Google Maps APIを呼び出す。YOUR_API_KEYをあなたのキーに置き換えてください。 -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap"
+          async defer></script>
 </body>
 </html>
