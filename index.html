@@ -77,16 +77,15 @@
   <!-- JavaScript：HTML、CSS、JS を1ファイルにまとめています -->
   <script>
     /* -----------------------------
-       人口データのサンプル作成
-       ※実際は e-Stat API で取得したデータを population.json として利用
+       サンプル人口データ（実際は population.json から取得）
        各オブジェクトは、ある地点の中心座標、年齢、性別、人数を表す
     ------------------------------ */
     let populationData = [
       { lat: 35.6897, lng: 139.6920, age: "30-39", gender: "male", count: 200 },
       { lat: 35.6890, lng: 139.6900, age: "40-49", gender: "male", count: 150 },
       { lat: 35.6885, lng: 139.6910, age: "50-59", gender: "female", count: 180 },
-      { lat: 35.6900, lng: 139.6930, age: "60-69", gender: "female", count: 120 },
-      // 他のサンプルデータを追加可能
+      { lat: 35.6900, lng: 139.6930, age: "60-69", gender: "female", count: 120 }
+      // 必要に応じて追加
     ];
 
     /* -----------------------------
@@ -96,17 +95,16 @@
       const R = 6371; // 地球半径 (km)
       const dLat = (lat2 - lat1) * Math.PI / 180;
       const dLng = (lng2 - lng1) * Math.PI / 180;
-      const a = 
-        Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLng/2) * Math.sin(dLng/2);
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
       return R * c;
     }
 
     /* -----------------------------
        店舗周辺（半径2km以内）の人口構成を集計する関数
-       戻り値: { total: 総人口, male30_50: 男性(30～49), female50plus: 女性(50以上) }
+       戻り値: { total: 総人口, male30_50: 男性(30-39,40-49), female50plus: 女性(50-59,60-69) }
     ------------------------------ */
     function computePopulationComposition(store) {
       let total = 0, male30_50 = 0, female50plus = 0;
@@ -114,11 +112,9 @@
         const dist = getDistance(store.latLng.lat(), store.latLng.lng(), point.lat, point.lng);
         if (dist <= 2) {
           total += point.count;
-          // 年齢の文字列で判定（簡略化のため "30-39" と "40-49" を対象）
           if (point.gender === "male" && (point.age === "30-39" || point.age === "40-49")) {
             male30_50 += point.count;
           }
-          // "50-59", "60-69", 以降を女性対象とする
           if (point.gender === "female" && (point.age === "50-59" || point.age === "60-69")) {
             female50plus += point.count;
           }
@@ -131,8 +127,7 @@
        売上倍率計算
        - シンプル弁当: 固定倍率 1.0
        - 贅沢弁当: 1 + (男性30-50 / 総人口)
-       - 健康弁当: 1 + (女性50以上 / 総人口)
-       総人口が0の場合は倍率1.0
+       - 健康弁当: 1 + (女性50plus / 総人口)
     ------------------------------ */
     function computeMultiplier(store, type) {
       const comp = computePopulationComposition(store);
@@ -142,7 +137,7 @@
       } else if (type === "健康") {
         return 1 + (comp.female50plus / comp.total);
       } else {
-        return 1.0; // シンプル弁当
+        return 1.0;
       }
     }
 
@@ -176,7 +171,7 @@
     };
 
     /* -----------------------------
-       Google Maps の初期化（API callback）
+       Google Maps の初期化（API の callback として呼ばれる）
     ------------------------------ */
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
@@ -193,7 +188,7 @@
     }
 
     /* -----------------------------
-       「お店を建てる」ボタン処理
+       「お店を建てる」ボタンの処理
     ------------------------------ */
     document.getElementById("buildStore").addEventListener("click", () => {
       if (!selectedLatLng) {
@@ -206,7 +201,7 @@
       }
       funds -= storeCost;
       updateFunds();
-      // 各店舗は、注文と在庫、日次記録を初期化
+      // 各店舗オブジェクト（注文と在庫、日次記録を初期化）を作成
       const store = {
         marker: new google.maps.Marker({
           position: selectedLatLng,
@@ -238,6 +233,7 @@
 
     /* -----------------------------
        各店舗の状況・注文設定の表示更新
+       ※ここで、店舗ごとに人口構成データも表示
     ------------------------------ */
     function updateStoreStatus() {
       const statusDiv = document.getElementById("storeStatus");
@@ -246,16 +242,23 @@
         html += "<p>店舗はまだありません</p>";
       } else {
         stores.forEach((store, index) => {
+          const comp = computePopulationComposition(store);
           html += "<div class='store'>";
           html += "店舗 " + (index + 1) + "（緯度: " + store.latLng.lat().toFixed(4) +
                   ", 経度: " + store.latLng.lng().toFixed(4) + ")<br>";
+          // 在庫状況
           html += "現在の在庫: シンプル: " + store.inventory["シンプル"] + " 個, ";
           html += "贅沢: " + store.inventory["贅沢"] + " 個, ";
           html += "健康: " + store.inventory["健康"] + " 個<br>";
-          html += "【注文状況】 ";
-          html += "シンプル: " + store.orders["シンプル"] + " 個, ";
+          // 注文状況
+          html += "【注文状況】 シンプル: " + store.orders["シンプル"] + " 個, ";
           html += "贅沢: " + store.orders["贅沢"] + " 個, ";
           html += "健康: " + store.orders["健康"] + " 個<br>";
+          // 人口構成データの表示
+          html += "店舗周辺人口構成（半径2km以内）: 総人口: " + comp.total;
+          html += ", 男性(30-49): " + comp.male30_50;
+          html += ", 女性(50以上): " + comp.female50plus + "<br>";
+          // 注文フォーム
           html += "仕入れ注文（次の日）：<br>";
           for (let type in bentoTypes) {
             html += type + "弁当: ";
@@ -307,10 +310,9 @@
 
     /* -----------------------------
        日次処理：1分ごとに実施（＝1日経過）
-       ・各店舗で、保持された注文内容に基づき仕入れを実施。
-       ・仕入れた在庫に対して、各店舗周辺の人口構成をもとに売上倍率を計算し販売。
-       ・売れた個数、廃棄された個数、総売上を計算し、日次レポートに反映。
-       ・仕入れ・売上後、在庫はリセット（翌日再仕入れ）。
+       ・各店舗で保持された注文に基づいて仕入れを実施し、在庫を更新
+       ・各店舗周辺の人口構成データをもとに売上倍率を算出し、販売数を決定
+       ・売上、廃棄、総売上を計算し、日次レポートに反映。仕入れ・売上後、在庫はリセット
     ------------------------------ */
     setInterval(() => {
       let overallReport = {
@@ -327,23 +329,20 @@
           const purchaseCost = bentoTypes[type].cost * quantity;
           if (funds >= purchaseCost) {
             funds -= purchaseCost;
-            // 仕入れは、前日注文分を在庫に設定
             store.inventory[type] = quantity;
           } else {
             store.inventory[type] = 0;
           }
-          // 注文はそのまま保持（翌日も同じ注文で仕入れ可能）
+          // 注文は保持されたまま（翌日も同じ注文で仕入れ可能）
         }
         updateFunds();
       });
 
-      // 各店舗で売上処理：各弁当ごとに、在庫に対してランダムな需要をシミュレートし、人口構成による倍率を反映
+      // 各店舗で売上処理：在庫に対してランダムな需要をシミュレートし、人口構成に基づく倍率を反映
       stores.forEach((store) => {
         for (let type in store.inventory) {
           let available = store.inventory[type];
-          // 基本的な売れる個数：0～available の乱数
           let baseSold = Math.floor(Math.random() * (available + 1));
-          // 店舗周辺の人口構成から倍率を計算
           const multiplier = computeMultiplier(store, type);
           let sold = Math.min(available, Math.floor(baseSold * multiplier));
           let discarded = available - sold;
@@ -352,7 +351,7 @@
           overallReport[type].sold += sold;
           overallReport[type].discarded += discarded;
           overallReport.totalSales += sold * bentoTypes[type].salePrice;
-          // 在庫はリセット（翌日の仕入れのため）
+          // 在庫リセット
           store.inventory[type] = 0;
         }
       });
