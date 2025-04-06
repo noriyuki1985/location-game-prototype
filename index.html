@@ -76,21 +76,53 @@
 
   <!-- JavaScript：HTML、CSS、JS を1ファイルにまとめています -->
   <script>
-    /* -----------------------------
-       サンプル人口データ（実際は population.json から取得）
-       各オブジェクトは、ある地点の中心座標、年齢、性別、人数を表す
-    ------------------------------ */
-    let populationData = [
-      { lat: 35.6897, lng: 139.6920, age: "30-39", gender: "male", count: 200 },
-      { lat: 35.6890, lng: 139.6900, age: "40-49", gender: "male", count: 150 },
-      { lat: 35.6885, lng: 139.6910, age: "50-59", gender: "female", count: 180 },
-      { lat: 35.6900, lng: 139.6930, age: "60-69", gender: "female", count: 120 }
-      // 必要に応じて追加
+    /* -----------------------------------------------------
+       ① e-Stat API 生データのサンプル（population_raw.json の代替）
+       ※実際は e-Stat API を呼び出して取得したデータを使用します。
+    ----------------------------------------------------- */
+    const estatRawData = [
+      { areaCode: "11000", age: "30-39", gender: "male", count: 200 },
+      { areaCode: "11000", age: "40-49", gender: "male", count: 150 },
+      { areaCode: "11000", age: "50-59", gender: "female", count: 180 },
+      { areaCode: "11000", age: "60-69", gender: "female", count: 120 },
+      { areaCode: "13000", age: "20-29", gender: "male", count: 300 }
     ];
 
-    /* -----------------------------
+    /* -----------------------------------------------------
+       ② geocodingData：行政区コードから中心座標への対応
+       ※実際は別途取得したジオコーディングデータを利用します。
+    ----------------------------------------------------- */
+    const geocodingData = {
+      "11000": { lat: 35.8569, lng: 139.6489 },
+      "13000": { lat: 35.6895, lng: 139.6917 }
+    };
+
+    /* -----------------------------------------------------
+       ③ processEstatData()：生データと geocodingData を結合し
+           最終的な人口データ (populationData) を生成する
+    ----------------------------------------------------- */
+    function processEstatData(estatData, geocodingData) {
+      let result = [];
+      estatData.forEach(item => {
+        const area = geocodingData[item.areaCode];
+        if (area) {
+          result.push({
+            lat: area.lat,
+            lng: area.lng,
+            age: item.age,
+            gender: item.gender,
+            count: item.count
+          });
+        }
+      });
+      return result;
+    }
+    // 最終的な人口データとして利用
+    let populationData = processEstatData(estatRawData, geocodingData);
+
+    /* -----------------------------------------------------
        ヘルパー関数：Haversine で2点間の距離（km）を計算
-    ------------------------------ */
+    ----------------------------------------------------- */
     function getDistance(lat1, lng1, lat2, lng2) {
       const R = 6371; // 地球半径 (km)
       const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -102,10 +134,11 @@
       return R * c;
     }
 
-    /* -----------------------------
-       店舗周辺（半径2km以内）の人口構成を集計する関数
+    /* -----------------------------------------------------
+       computePopulationComposition()：
+       店舗周辺（半径2km以内）の人口構成を集計する
        戻り値: { total: 総人口, male30_50: 男性(30-39,40-49), female50plus: 女性(50-59,60-69) }
-    ------------------------------ */
+    ----------------------------------------------------- */
     function computePopulationComposition(store) {
       let total = 0, male30_50 = 0, female50plus = 0;
       populationData.forEach(point => {
@@ -123,12 +156,12 @@
       return { total, male30_50, female50plus };
     }
 
-    /* -----------------------------
-       売上倍率計算
-       - シンプル弁当: 固定倍率 1.0
-       - 贅沢弁当: 1 + (男性30-50 / 総人口)
-       - 健康弁当: 1 + (女性50plus / 総人口)
-    ------------------------------ */
+    /* -----------------------------------------------------
+       売上倍率計算：
+         - シンプル弁当: 固定倍率 1.0
+         - 贅沢弁当: 1 + (男性30-50 / 総人口)
+         - 健康弁当: 1 + (女性50plus / 総人口)
+    ----------------------------------------------------- */
     function computeMultiplier(store, type) {
       const comp = computePopulationComposition(store);
       if (comp.total === 0) return 1.0;
@@ -141,9 +174,9 @@
       }
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        Google Maps API の動的読み込み
-    ------------------------------ */
+    ----------------------------------------------------- */
     function loadGoogleMapsAPI() {
       const script = document.createElement("script");
       script.src = "https://maps.googleapis.com/maps/api/js?key=" +
@@ -170,9 +203,9 @@
       "健康":   { salePrice: 400, cost: 300 }
     };
 
-    /* -----------------------------
-       Google Maps の初期化（API の callback として呼ばれる）
-    ------------------------------ */
+    /* -----------------------------------------------------
+       Google Maps の初期化（API callback）
+    ----------------------------------------------------- */
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
         center: { lat: 35.6895, lng: 139.6917 },
@@ -187,9 +220,9 @@
       });
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        「お店を建てる」ボタンの処理
-    ------------------------------ */
+    ----------------------------------------------------- */
     document.getElementById("buildStore").addEventListener("click", () => {
       if (!selectedLatLng) {
         alert("まずは地図をクリックして位置を選んでください！");
@@ -201,7 +234,7 @@
       }
       funds -= storeCost;
       updateFunds();
-      // 各店舗オブジェクト（注文と在庫、日次記録を初期化）を作成
+      // 各店舗オブジェクト（注文、在庫、日次記録を初期化）
       const store = {
         marker: new google.maps.Marker({
           position: selectedLatLng,
@@ -224,17 +257,17 @@
       updateStoreStatus();
     });
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        所持金表示更新
-    ------------------------------ */
+    ----------------------------------------------------- */
     function updateFunds() {
       document.getElementById("money").textContent = funds;
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        各店舗の状況・注文設定の表示更新
-       ※ここで、店舗ごとに人口構成データも表示
-    ------------------------------ */
+       ※ここで、店舗ごとの人口構成データも表示
+    ----------------------------------------------------- */
     function updateStoreStatus() {
       const statusDiv = document.getElementById("storeStatus");
       let html = "<h2>各店舗の状況・注文設定</h2>";
@@ -246,15 +279,13 @@
           html += "<div class='store'>";
           html += "店舗 " + (index + 1) + "（緯度: " + store.latLng.lat().toFixed(4) +
                   ", 経度: " + store.latLng.lng().toFixed(4) + ")<br>";
-          // 在庫状況
           html += "現在の在庫: シンプル: " + store.inventory["シンプル"] + " 個, ";
           html += "贅沢: " + store.inventory["贅沢"] + " 個, ";
           html += "健康: " + store.inventory["健康"] + " 個<br>";
-          // 注文状況
           html += "【注文状況】 シンプル: " + store.orders["シンプル"] + " 個, ";
           html += "贅沢: " + store.orders["贅沢"] + " 個, ";
           html += "健康: " + store.orders["健康"] + " 個<br>";
-          // 人口構成データの表示
+          // ここで店舗周辺の人口構成データを表示
           html += "店舗周辺人口構成（半径2km以内）: 総人口: " + comp.total;
           html += ", 男性(30-49): " + comp.male30_50;
           html += ", 女性(50以上): " + comp.female50plus + "<br>";
@@ -271,9 +302,9 @@
       statusDiv.innerHTML = html;
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        注文確定ボタンの処理（店舗ごと注文更新）
-    ------------------------------ */
+    ----------------------------------------------------- */
     function setOrder(index) {
       const store = stores[index];
       for (let type in bentoTypes) {
@@ -284,9 +315,9 @@
       updateStoreStatus();
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        日次レポートテーブルへの行追加
-    ------------------------------ */
+    ----------------------------------------------------- */
     function appendDailyLog(day, report) {
       const logTable = document.getElementById("logTable");
       let row = logTable.insertRow(-1);
@@ -308,12 +339,12 @@
       cellTotalSales.textContent = report.totalSales;
     }
 
-    /* -----------------------------
+    /* -----------------------------------------------------
        日次処理：1分ごとに実施（＝1日経過）
-       ・各店舗で保持された注文に基づいて仕入れを実施し、在庫を更新
-       ・各店舗周辺の人口構成データをもとに売上倍率を算出し、販売数を決定
+       ・各店舗で保持された注文内容に基づいて仕入れを実施し、在庫を更新
+       ・各店舗周辺の人口構成データから売上倍率を算出し、販売数を決定
        ・売上、廃棄、総売上を計算し、日次レポートに反映。仕入れ・売上後、在庫はリセット
-    ------------------------------ */
+    ----------------------------------------------------- */
     setInterval(() => {
       let overallReport = {
         "シンプル": { sold: 0, discarded: 0 },
@@ -329,16 +360,17 @@
           const purchaseCost = bentoTypes[type].cost * quantity;
           if (funds >= purchaseCost) {
             funds -= purchaseCost;
+            // 注文内容を在庫に設定（既存の在庫に上書き）
             store.inventory[type] = quantity;
           } else {
             store.inventory[type] = 0;
           }
-          // 注文は保持されたまま（翌日も同じ注文で仕入れ可能）
+          // 注文はそのまま保持（翌日も同じ注文で仕入れ可能）
         }
         updateFunds();
       });
 
-      // 各店舗で売上処理：在庫に対してランダムな需要をシミュレートし、人口構成に基づく倍率を反映
+      // 各店舗で売上処理：在庫に対してランダムな需要をシミュレートし、人口構成による倍率を反映
       stores.forEach((store) => {
         for (let type in store.inventory) {
           let available = store.inventory[type];
@@ -351,7 +383,7 @@
           overallReport[type].sold += sold;
           overallReport[type].discarded += discarded;
           overallReport.totalSales += sold * bentoTypes[type].salePrice;
-          // 在庫リセット
+          // 在庫リセット（翌日の仕入れのため）
           store.inventory[type] = 0;
         }
       });
