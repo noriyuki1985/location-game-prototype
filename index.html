@@ -3,9 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <title>お弁当屋さん経営ゲーム</title>
-  <!-- CSS の読み込み -->
-  <link rel="stylesheet" href="style.css">
-  <!-- 環境変数等の設定ファイル -->
+  <!-- CSS をここに記述 -->
+  <style>
+    /* 地図のスタイル */
+    #map {
+      height: 400px;
+      width: 100%;
+    }
+    /* 各エリアのスタイル */
+    #info, #storeStatus {
+      margin-top: 10px;
+      font-size: 16px;
+    }
+    .button {
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+    label {
+      margin-right: 10px;
+    }
+    .store {
+      margin-bottom: 10px;
+      padding: 5px;
+      border: 1px solid #ccc;
+    }
+  </style>
+  <!-- config.js を読み込み -->
   <script src="config.js"></script>
 </head>
 <body>
@@ -18,23 +41,185 @@
     <p>クリックした位置：<span id="latlng">なし</span></p>
     <button id="buildStore" class="button" disabled>お店を建てる（建設費: 1000円）</button>
     <p>所持金: <span id="money">10000</span> 円</p>
-    <label for="bentoType">本日の仕入れ弁当:</label>
-    <select id="bentoType">
-      <option value="シンプル">シンプル弁当</option>
-      <option value="贅沢">贅沢弁当</option>
-      <option value="健康">健康弁当</option>
-    </select>
-    <label for="restockAmount">仕入れ個数:</label>
-    <input type="number" id="restockAmount" value="5" min="0">
   </div>
 
-  <!-- 店舗の仕入れ状況表示エリア -->
+  <!-- 各店舗の仕入れ注文を設定するエリア -->
   <div id="storeStatus">
     <h2>各店舗の仕入れ状況</h2>
-    <!-- ここに各店舗の情報が表示されます -->
+    <!-- ここに各店舗の情報と、注文設定フォームが表示されます -->
   </div>
 
-  <!-- ゲームのロジック -->
-  <script src="script.js"></script>
+  <!-- ゲームのロジック（JavaScript） -->
+  <script>
+    // 動的に Google Maps API を読み込む
+    function loadGoogleMapsAPI() {
+      const script = document.createElement("script");
+      script.src = "https://maps.googleapis.com/maps/api/js?key=" +
+                   CONFIG.GOOGLE_MAPS_API_KEY + "&callback=initMap";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    loadGoogleMapsAPI();
+
+    // グローバル変数
+    let map;
+    let selectedLatLng = null;
+    let funds = 10000;      // 初期所持金
+    const storeCost = 1000; // 店舗建設費
+    let stores = [];        // 各店舗の情報を格納する配列
+
+    // お弁当タイプごとのデータ（仕入れコストと販売価格）
+    const bentoTypes = {
+      "シンプル": { salePrice: 300, cost: 200 },
+      "贅沢":   { salePrice: 500, cost: 400 },
+      "健康":   { salePrice: 400, cost: 300 }
+    };
+
+    // Google Maps の初期化（API の callback として呼ばれる）
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 35.6895, lng: 139.6917 },
+        zoom: 10
+      });
+
+      // 地図クリックで位置を取得
+      map.addListener("click", (e) => {
+        selectedLatLng = e.latLng;
+        document.getElementById("latlng").textContent =
+          "緯度: " + selectedLatLng.lat().toFixed(4) +
+          ", 経度: " + selectedLatLng.lng().toFixed(4);
+        document.getElementById("buildStore").disabled = false;
+      });
+    }
+
+    // 店舗建設ボタンの処理
+    document.getElementById("buildStore").addEventListener("click", () => {
+      if (!selectedLatLng) {
+        alert("まずは地図をクリックして位置を選んでください！");
+        return;
+      }
+      if (funds < storeCost) {
+        alert("所持金が不足しています！");
+        return;
+      }
+      funds -= storeCost;
+      updateFunds();
+
+      // 新規店舗オブジェクトを作成（各店舗は個別の在庫と注文情報を持つ）
+      const store = {
+        marker: new google.maps.Marker({
+          position: selectedLatLng,
+          map: map,
+          title: "お弁当屋さん"
+        }),
+        latLng: selectedLatLng,
+        // 各弁当の在庫（初期は 0 個）
+        inventory: { "シンプル": 0, "贅沢": 0, "健康": 0 },
+        // 注文情報（次の日の仕入れ注文を設定するため）
+        order: null
+      };
+      stores.push(store);
+
+      document.getElementById("buildStore").disabled = true;
+      document.getElementById("latlng").textContent = "なし";
+      selectedLatLng = null;
+
+      updateStoreStatus();
+    });
+
+    // 所持金表示更新
+    function updateFunds() {
+      document.getElementById("money").textContent = funds;
+    }
+
+    // 各店舗の表示と、注文設定フォームの更新
+    function updateStoreStatus() {
+      const statusDiv = document.getElementById("storeStatus");
+      let html = "<h2>各店舗の仕入れ状況</h2>";
+      if (stores.length === 0) {
+        html += "<p>店舗はまだありません</p>";
+      } else {
+        stores.forEach((store, index) => {
+          html += "<div class='store'>";
+          html += "店舗 " + (index + 1) + "（緯度: " + store.latLng.lat().toFixed(4) +
+                  ", 経度: " + store.latLng.lng().toFixed(4) + "）<br>";
+          html += "在庫 - シンプル: " + store.inventory["シンプル"] + " 個, ";
+          html += "贅沢: " + store.inventory["贅沢"] + " 個, ";
+          html += "健康: " + store.inventory["健康"] + " 個<br>";
+          if (store.order) {
+            html += "【注文済み】 " + store.order.quantity + " 個の" + store.order.type + "弁当<br>";
+          } else {
+            // 注文フォーム（店舗単位）
+            html += "仕入れ注文: ";
+            html += "<select id='orderType" + index + "'>";
+            html += "<option value='シンプル'>シンプル弁当</option>";
+            html += "<option value='贅沢'>贅沢弁当</option>";
+            html += "<option value='健康'>健康弁当</option>";
+            html += "</select> ";
+            html += "<input type='number' id='orderQuantity" + index + "' value='0' min='0' style='width:60px;'> ";
+            html += "<button onclick='setOrder(" + index + ")'>注文確定</button>";
+          }
+          html += "</div>";
+        });
+      }
+      statusDiv.innerHTML = html;
+    }
+
+    // 各店舗の注文を設定する関数（注文確定ボタン用）
+    function setOrder(index) {
+      const orderType = document.getElementById("orderType" + index).value;
+      const orderQuantity = parseInt(document.getElementById("orderQuantity" + index).value, 10) || 0;
+      if (orderQuantity <= 0) {
+        alert("注文個数は0より大きい値を設定してください。");
+        return;
+      }
+      stores[index].order = { type: orderType, quantity: orderQuantity };
+      updateStoreStatus();
+    }
+
+    // 毎日（1分ごと）の処理：注文の仕入れと売上
+    setInterval(() => {
+      // ① 各店舗ごとの注文を処理
+      stores.forEach((store) => {
+        if (store.order) {
+          const orderType = store.order.type;
+          const orderQuantity = store.order.quantity;
+          const cost = bentoTypes[orderType].cost * orderQuantity;
+          if (funds >= cost) {
+            funds -= cost;
+            store.inventory[orderType] += orderQuantity;
+            console.log("店舗の注文処理: " + orderQuantity + " 個の " + orderType + " 弁当を購入（費用: " + cost + "円）");
+          } else {
+            console.log("店舗注文失敗：所持金不足（" + orderType + "注文）");
+          }
+          // 注文処理後、注文情報をリセット
+          store.order = null;
+        }
+      });
+      updateFunds();
+      updateStoreStatus();
+
+      // ② 売上処理：各店舗ごとに、各弁当で在庫があれば1個ずつ販売
+      let totalIncome = 0;
+      stores.forEach((store) => {
+        for (let type in store.inventory) {
+          if (store.inventory[type] > 0) {
+            store.inventory[type]--;
+            totalIncome += bentoTypes[type].salePrice;
+          }
+        }
+      });
+      if (totalIncome > 0) {
+        funds += totalIncome;
+        updateFunds();
+        updateStoreStatus();
+        alert("1日経過！ 売上 " + totalIncome + " 円 が加算されました！");
+      } else {
+        alert("1日経過！ 在庫が不足しているため、売上はありませんでした。");
+      }
+    }, 60000); // 60000ミリ秒＝1分
+
+  </script>
 </body>
 </html>
