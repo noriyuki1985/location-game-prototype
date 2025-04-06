@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>お弁当屋さん経営ゲーム - 注文＆日次レポート版</title>
+  <title>お弁当屋さん経営ゲーム - 人口構成連動版</title>
   <style>
     /* CSS */
     #map {
@@ -35,19 +35,12 @@
       padding: 5px;
       text-align: center;
     }
-    /* グラフ用 */
-    #salesChart {
-      max-width: 100%;
-      margin-top: 20px;
-    }
   </style>
   <!-- config.js の読み込み -->
   <script src="config.js"></script>
-  <!-- Chart.js の読み込み（CDN） -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-  <h1>お弁当屋さん経営ゲーム</h1>
+  <h1>お弁当屋さん経営ゲーム - 人口構成連動版</h1>
   <!-- Google Maps 表示エリア -->
   <div id="map"></div>
 
@@ -61,7 +54,7 @@
   <!-- 各店舗の状況・注文設定エリア -->
   <div id="storeStatus">
     <h2>各店舗の状況・注文設定</h2>
-    <!-- 店舗情報と注文設定フォームがここに表示 -->
+    <!-- 店舗情報と注文設定フォームがここに表示されます -->
   </div>
 
   <!-- 日次レポートエリア -->
@@ -79,13 +72,83 @@
         <th>総売上</th>
       </tr>
     </table>
-    <!-- グラフ表示用のキャンバス -->
-    <canvas id="salesChart"></canvas>
   </div>
 
   <!-- JavaScript：HTML、CSS、JS を1ファイルにまとめています -->
   <script>
-    // Google Maps API を動的に読み込む
+    /* -----------------------------
+       人口データのサンプル作成
+       ※実際は e-Stat API で取得したデータを population.json として利用
+       各オブジェクトは、ある地点の中心座標、年齢、性別、人数を表す
+    ------------------------------ */
+    let populationData = [
+      { lat: 35.6897, lng: 139.6920, age: "30-39", gender: "male", count: 200 },
+      { lat: 35.6890, lng: 139.6900, age: "40-49", gender: "male", count: 150 },
+      { lat: 35.6885, lng: 139.6910, age: "50-59", gender: "female", count: 180 },
+      { lat: 35.6900, lng: 139.6930, age: "60-69", gender: "female", count: 120 },
+      // 他のサンプルデータを追加可能
+    ];
+
+    /* -----------------------------
+       ヘルパー関数：Haversine で2点間の距離（km）を計算
+    ------------------------------ */
+    function getDistance(lat1, lng1, lat2, lng2) {
+      const R = 6371; // 地球半径 (km)
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLng/2) * Math.sin(dLng/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    /* -----------------------------
+       店舗周辺（半径2km以内）の人口構成を集計する関数
+       戻り値: { total: 総人口, male30_50: 男性(30～49), female50plus: 女性(50以上) }
+    ------------------------------ */
+    function computePopulationComposition(store) {
+      let total = 0, male30_50 = 0, female50plus = 0;
+      populationData.forEach(point => {
+        const dist = getDistance(store.latLng.lat(), store.latLng.lng(), point.lat, point.lng);
+        if (dist <= 2) {
+          total += point.count;
+          // 年齢の文字列で判定（簡略化のため "30-39" と "40-49" を対象）
+          if (point.gender === "male" && (point.age === "30-39" || point.age === "40-49")) {
+            male30_50 += point.count;
+          }
+          // "50-59", "60-69", 以降を女性対象とする
+          if (point.gender === "female" && (point.age === "50-59" || point.age === "60-69")) {
+            female50plus += point.count;
+          }
+        }
+      });
+      return { total, male30_50, female50plus };
+    }
+
+    /* -----------------------------
+       売上倍率計算
+       - シンプル弁当: 固定倍率 1.0
+       - 贅沢弁当: 1 + (男性30-50 / 総人口)
+       - 健康弁当: 1 + (女性50以上 / 総人口)
+       総人口が0の場合は倍率1.0
+    ------------------------------ */
+    function computeMultiplier(store, type) {
+      const comp = computePopulationComposition(store);
+      if (comp.total === 0) return 1.0;
+      if (type === "贅沢") {
+        return 1 + (comp.male30_50 / comp.total);
+      } else if (type === "健康") {
+        return 1 + (comp.female50plus / comp.total);
+      } else {
+        return 1.0; // シンプル弁当
+      }
+    }
+
+    /* -----------------------------
+       Google Maps API の動的読み込み
+    ------------------------------ */
     function loadGoogleMapsAPI() {
       const script = document.createElement("script");
       script.src = "https://maps.googleapis.com/maps/api/js?key=" +
@@ -101,10 +164,9 @@
     let selectedLatLng = null;
     let funds = 10000;
     const storeCost = 1000;
-    let stores = []; // 各店舗のオブジェクトを格納
+    let stores = []; // 各店舗オブジェクトを格納
     let dayCount = 1;
-    // 日次総売上をグラフ表示するための配列
-    let dailySalesData = [];
+    let dailySalesData = []; // 日次総売上を記録
 
     // お弁当の種類ごとのデータ（仕入れコストと販売価格）
     const bentoTypes = {
@@ -113,45 +175,9 @@
       "健康":   { salePrice: 400, cost: 300 }
     };
 
-    // Chart.js のグラフを初期化
-    let salesChart;
-    function initChart() {
-      const ctx = document.getElementById("salesChart").getContext("2d");
-      salesChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: [], // 日付ラベル（例: "Day 1", "Day 2", ...）
-          datasets: [{
-            label: '総売上',
-            data: [],
-            backgroundColor: 'rgba(75,192,192,0.4)',
-            borderColor: 'rgba(75,192,192,1)',
-            borderWidth: 1,
-            fill: false,
-          }]
-        },
-        options: {
-          scales: {
-            x: {
-              title: {
-                display: true,
-                text: '日付'
-              }
-            },
-            y: {
-              title: {
-                display: true,
-                text: '総売上 (円)'
-              },
-              beginAtZero: true
-            }
-          }
-        }
-      });
-    }
-    initChart();
-
-    // Google Maps の初期化（API の callback として呼ばれる）
+    /* -----------------------------
+       Google Maps の初期化（API callback）
+    ------------------------------ */
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
         center: { lat: 35.6895, lng: 139.6917 },
@@ -166,7 +192,9 @@
       });
     }
 
-    // 「お店を建てる」ボタンの処理
+    /* -----------------------------
+       「お店を建てる」ボタン処理
+    ------------------------------ */
     document.getElementById("buildStore").addEventListener("click", () => {
       if (!selectedLatLng) {
         alert("まずは地図をクリックして位置を選んでください！");
@@ -178,7 +206,7 @@
       }
       funds -= storeCost;
       updateFunds();
-      // 各店舗オブジェクト（注文と在庫、日次売上記録を初期化）
+      // 各店舗は、注文と在庫、日次記録を初期化
       const store = {
         marker: new google.maps.Marker({
           position: selectedLatLng,
@@ -186,11 +214,8 @@
           title: "お弁当屋さん"
         }),
         latLng: selectedLatLng,
-        // 各お弁当の在庫（初期は 0 個）
         inventory: { "シンプル": 0, "贅沢": 0, "健康": 0 },
-        // 注文情報：各弁当ごとに注文個数（ユーザーが設定し、そのまま保持）
         orders: { "シンプル": 0, "贅沢": 0, "健康": 0 },
-        // 日次売上記録（累計ではなく、毎日の結果を別で保持）
         daily: { 
           "シンプル": { sold: 0, discarded: 0 },
           "贅沢": { sold: 0, discarded: 0 },
@@ -204,12 +229,16 @@
       updateStoreStatus();
     });
 
-    // 所持金表示更新
+    /* -----------------------------
+       所持金表示更新
+    ------------------------------ */
     function updateFunds() {
       document.getElementById("money").textContent = funds;
     }
 
-    // 各店舗の状況・注文設定の表示更新
+    /* -----------------------------
+       各店舗の状況・注文設定の表示更新
+    ------------------------------ */
     function updateStoreStatus() {
       const statusDiv = document.getElementById("storeStatus");
       let html = "<h2>各店舗の状況・注文設定</h2>";
@@ -223,12 +252,10 @@
           html += "現在の在庫: シンプル: " + store.inventory["シンプル"] + " 個, ";
           html += "贅沢: " + store.inventory["贅沢"] + " 個, ";
           html += "健康: " + store.inventory["健康"] + " 個<br>";
-          // 現在の注文状況を表示（注文は保持され続ける）
           html += "【注文状況】 ";
           html += "シンプル: " + store.orders["シンプル"] + " 個, ";
           html += "贅沢: " + store.orders["贅沢"] + " 個, ";
           html += "健康: " + store.orders["健康"] + " 個<br>";
-          // 注文フォーム：各お弁当ごとに注文数量を入力（初期値は既存の注文値）
           html += "仕入れ注文（次の日）：<br>";
           for (let type in bentoTypes) {
             html += type + "弁当: ";
@@ -241,7 +268,9 @@
       statusDiv.innerHTML = html;
     }
 
-    // 注文確定ボタンの処理：店舗の注文を更新（保持される）
+    /* -----------------------------
+       注文確定ボタンの処理（店舗ごと注文更新）
+    ------------------------------ */
     function setOrder(index) {
       const store = stores[index];
       for (let type in bentoTypes) {
@@ -252,7 +281,9 @@
       updateStoreStatus();
     }
 
-    // 日次レポートテーブルに行を追加
+    /* -----------------------------
+       日次レポートテーブルへの行追加
+    ------------------------------ */
     function appendDailyLog(day, report) {
       const logTable = document.getElementById("logTable");
       let row = logTable.insertRow(-1);
@@ -274,9 +305,14 @@
       cellTotalSales.textContent = report.totalSales;
     }
 
-    // 日次処理：1分ごとに実施（＝1日経過）
+    /* -----------------------------
+       日次処理：1分ごとに実施（＝1日経過）
+       ・各店舗で、保持された注文内容に基づき仕入れを実施。
+       ・仕入れた在庫に対して、各店舗周辺の人口構成をもとに売上倍率を計算し販売。
+       ・売れた個数、廃棄された個数、総売上を計算し、日次レポートに反映。
+       ・仕入れ・売上後、在庫はリセット（翌日再仕入れ）。
+    ------------------------------ */
     setInterval(() => {
-      // overallReport を初期化（全店舗合計）
       let overallReport = {
         "シンプル": { sold: 0, discarded: 0 },
         "贅沢": { sold: 0, discarded: 0 },
@@ -284,55 +320,49 @@
         totalSales: 0
       };
 
-      // 各店舗で、注文に基づく仕入れを実施（各店舗は保持中の注文内容をそのまま使用）
+      // 各店舗で、保持された注文内容に基づいて仕入れを実施
       stores.forEach((store) => {
         for (let type in store.orders) {
           const quantity = store.orders[type];
           const purchaseCost = bentoTypes[type].cost * quantity;
           if (funds >= purchaseCost) {
             funds -= purchaseCost;
-            // 注文に応じた数量を仕入れる（既存在庫に追加）
-            store.inventory[type] += quantity;
+            // 仕入れは、前日注文分を在庫に設定
+            store.inventory[type] = quantity;
           } else {
-            // 資金不足の場合は仕入れなし（在庫はそのまま）
+            store.inventory[type] = 0;
           }
+          // 注文はそのまま保持（翌日も同じ注文で仕入れ可能）
         }
         updateFunds();
       });
 
-      // 各店舗で売上処理：各お弁当ごとに、在庫に対してランダムな需要をシミュレート
+      // 各店舗で売上処理：各弁当ごとに、在庫に対してランダムな需要をシミュレートし、人口構成による倍率を反映
       stores.forEach((store) => {
         for (let type in store.inventory) {
           let available = store.inventory[type];
-          // 売れる個数：0～available のランダムな整数
-          let sold = Math.floor(Math.random() * (available + 1));
+          // 基本的な売れる個数：0～available の乱数
+          let baseSold = Math.floor(Math.random() * (available + 1));
+          // 店舗周辺の人口構成から倍率を計算
+          const multiplier = computeMultiplier(store, type);
+          let sold = Math.min(available, Math.floor(baseSold * multiplier));
           let discarded = available - sold;
-          // 日次レポート用に各店舗の日次記録に加算（※各店舗の daily は累積）
           store.daily[type].sold += sold;
           store.daily[type].discarded += discarded;
           overallReport[type].sold += sold;
           overallReport[type].discarded += discarded;
           overallReport.totalSales += sold * bentoTypes[type].salePrice;
-          // 売上後、在庫はリセット（翌日仕入れのため）
+          // 在庫はリセット（翌日の仕入れのため）
           store.inventory[type] = 0;
         }
       });
 
-      // 売上収入を所持金に加算
       funds += overallReport.totalSales;
       updateFunds();
       updateStoreStatus();
-
-      // 日次レポートをテーブルに追加
       appendDailyLog(dayCount, overallReport);
-
-      // グラフへもデータを追加：横軸ラベルに "Day X"、縦軸に総売上
-      salesChart.data.labels.push("Day " + dayCount);
-      salesChart.data.datasets[0].data.push(overallReport.totalSales);
-      salesChart.update();
-
       dayCount++;
-    }, 60000); // 60000ミリ秒＝1分
+    }, 60000);
 
   </script>
 </body>
