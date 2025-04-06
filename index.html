@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>お弁当屋さん経営ゲーム</title>
+  <title>お弁当屋さん経営ゲーム - 在庫システム改良版</title>
   <style>
     /* 地図のスタイル */
     #map {
@@ -17,6 +17,9 @@
       padding: 10px 20px;
       font-size: 16px;
     }
+    label {
+      margin-right: 10px;
+    }
   </style>
 </head>
 <body>
@@ -24,40 +27,58 @@
   <!-- Google Mapsを表示するエリア -->
   <div id="map"></div>
 
-  <!-- クリックした位置やお店建設、所持金の表示エリア -->
+  <!-- クリック位置・店舗設置・資源表示エリア -->
   <div id="info">
     <p>クリックした位置：<span id="latlng">なし</span></p>
     <button id="buildStore" class="button" disabled>お店を建てる（建設費: 1000円）</button>
     <p>所持金: <span id="money">10000</span> 円</p>
+    <p>在庫: <span id="inventory">10</span> 個</p>
+    
+    <!-- お弁当の種類選択 -->
+    <label for="bentoType">本日の仕入れ弁当:</label>
+    <select id="bentoType">
+      <option value="シンプル">シンプル弁当</option>
+      <option value="贅沢">贅沢弁当</option>
+      <option value="健康">健康弁当</option>
+    </select>
+    <!-- 仕入れ個数の設定 -->
+    <label for="restockAmount">仕入れ個数:</label>
+    <input type="number" id="restockAmount" value="5" min="0">
   </div>
 
   <script>
     let map;
     let selectedLatLng = null;
-    let funds = 10000;      // 初期の所持金
-    const storeCost = 1000; // お店を建てるための費用
-    let stores = [];        // 建てたお店の情報を格納する配列
+    let funds = 10000;      // 初期所持金
+    let inventory = 10;     // 初期在庫
+    const storeCost = 1000; // 店舗建設費
+    let stores = [];        // 建設した店舗情報
 
-    // Google Mapsの初期化関数
+    // お弁当タイプごとのデータ（仕入れコストと販売価格）
+    const bentoTypes = {
+      "シンプル": { salePrice: 300, cost: 200 },
+      "贅沢":   { salePrice: 500, cost: 400 },
+      "健康":   { salePrice: 400, cost: 300 }
+    };
+
+    // Google Mapsの初期化
     function initMap() {
-      // 関東（東京）を中心に地図を表示
       map = new google.maps.Map(document.getElementById("map"), {
         center: { lat: 35.6895, lng: 139.6917 },
         zoom: 10
       });
 
-      // 地図クリック時の処理
+      // 地図クリックで位置取得
       map.addListener("click", (e) => {
         selectedLatLng = e.latLng;
         document.getElementById("latlng").textContent =
           "緯度: " + selectedLatLng.lat().toFixed(4) +
           ", 経度: " + selectedLatLng.lng().toFixed(4);
-        // クリックしたらお店建設ボタンを有効にする
         document.getElementById("buildStore").disabled = false;
       });
     }
 
-    // お店建設ボタンのクリック処理
+    // 店舗建設ボタンの処理
     document.getElementById("buildStore").addEventListener("click", () => {
       if (!selectedLatLng) {
         alert("まずは地図をクリックして位置を選んでください！");
@@ -67,48 +88,72 @@
         alert("所持金が不足しています！");
         return;
       }
-
-      // 建設費を差し引く
       funds -= storeCost;
       updateFunds();
 
-      // お店のマーカーを地図上に追加
       const marker = new google.maps.Marker({
         position: selectedLatLng,
         map: map,
         title: "お弁当屋さん"
       });
-
-      // 建設したお店の情報を保存
       stores.push({ marker: marker, latLng: selectedLatLng });
 
-      // 建設後はボタンを無効にし、選択状態をリセット
       document.getElementById("buildStore").disabled = true;
       document.getElementById("latlng").textContent = "なし";
       selectedLatLng = null;
     });
 
-    // 所持金表示を更新する関数
+    // 所持金表示更新
     function updateFunds() {
       document.getElementById("money").textContent = funds;
     }
 
-    // タイマー：1分ごとに「1日経過」として収入を計算
+    // 在庫表示更新
+    function updateInventory() {
+      document.getElementById("inventory").textContent = inventory;
+    }
+
+    // 毎日（1分ごと）の処理：自動仕入れと売上
     setInterval(() => {
+      // 選択されたお弁当の種類と仕入れ個数を取得
+      const selectedType = document.getElementById("bentoType").value;
+      const bento = bentoTypes[selectedType];
+      const restockAmount = parseInt(document.getElementById("restockAmount").value, 10) || 0;
+      
+      // 自動仕入れ：入力された個数だけ仕入れる
+      const purchaseCost = bento.cost * restockAmount;
+      if (funds >= purchaseCost) {
+        funds -= purchaseCost;
+        inventory += restockAmount;
+        updateFunds();
+        updateInventory();
+        console.log("自動仕入れ: " + restockAmount + "個の" + selectedType + "を購入。費用: " + purchaseCost + "円");
+      } else {
+        console.log("仕入れ失敗: 所持金不足");
+      }
+
+      // 売上：各店舗で在庫があれば1個ずつ売る
       let totalIncome = 0;
-      // 各お店からランダムな収入（例：100～500円）を加算
       stores.forEach(() => {
-        const income = Math.floor(Math.random() * 401) + 100;
-        totalIncome += income;
+        if (inventory > 0) {
+          inventory--;
+          totalIncome += bento.salePrice;
+        }
       });
-      funds += totalIncome;
-      updateFunds();
-      alert("1日経過！ 売上 " + totalIncome + " 円 が加算されました！");
-    }, 60000); // 60000ミリ秒 = 1分
+
+      if (totalIncome > 0) {
+        funds += totalIncome;
+        updateFunds();
+        updateInventory();
+        alert("1日経過！ 売上 " + totalIncome + " 円 が加算されました！");
+      } else {
+        alert("1日経過！ 在庫が不足しているため、売上はありませんでした。");
+      }
+    }, 60000); // 60000ミリ秒＝1分
 
   </script>
-  <!-- Google Maps APIを呼び出す。YOUR_API_KEYをあなたのキーに置き換えてください。 -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBx6jYAfWuQz0E8nIn-B-jy2eZi9y2Pt84&callback=initMap"
+  <!-- Google Maps APIの読み込み：YOUR_API_KEYを実際のキーに置き換えてください -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap"
           async defer></script>
 </body>
 </html>
