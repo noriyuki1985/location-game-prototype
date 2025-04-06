@@ -2,16 +2,14 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>お弁当屋さん経営ゲーム</title>
-  <!-- CSS をここに記述 -->
+  <title>お弁当屋さん経営ゲーム - 注文＆日次レポート版</title>
   <style>
-    /* 地図のスタイル */
+    /* CSS */
     #map {
       height: 400px;
       width: 100%;
     }
-    /* 各エリアのスタイル */
-    #info, #storeStatus {
+    #info, #storeStatus, #dailyLog {
       margin-top: 10px;
       font-size: 16px;
     }
@@ -27,31 +25,58 @@
       padding: 5px;
       border: 1px solid #ccc;
     }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 5px;
+      text-align: center;
+    }
   </style>
   <!-- config.js を読み込み -->
   <script src="config.js"></script>
 </head>
 <body>
   <h1>お弁当屋さん経営ゲーム</h1>
-  <!-- Google Maps を表示するエリア -->
+  <!-- Google Maps 表示エリア -->
   <div id="map"></div>
 
-  <!-- ゲーム情報表示エリア -->
+  <!-- 基本情報エリア -->
   <div id="info">
     <p>クリックした位置：<span id="latlng">なし</span></p>
     <button id="buildStore" class="button" disabled>お店を建てる（建設費: 1000円）</button>
     <p>所持金: <span id="money">10000</span> 円</p>
   </div>
 
-  <!-- 各店舗の仕入れ注文を設定するエリア -->
+  <!-- 各店舗の状況・注文設定エリア -->
   <div id="storeStatus">
-    <h2>各店舗の仕入れ状況</h2>
-    <!-- ここに各店舗の情報と、注文設定フォームが表示されます -->
+    <h2>各店舗の状況・注文設定</h2>
+    <!-- 店舗情報はここに表示 -->
   </div>
 
-  <!-- ゲームのロジック（JavaScript） -->
+  <!-- 日次レポートエリア -->
+  <div id="dailyLog">
+    <h2>日次レポート</h2>
+    <table id="logTable">
+      <tr>
+        <th>日付</th>
+        <th>シンプル 売上</th>
+        <th>シンプル 廃棄</th>
+        <th>贅沢 売上</th>
+        <th>贅沢 廃棄</th>
+        <th>健康 売上</th>
+        <th>健康 廃棄</th>
+        <th>総売上</th>
+      </tr>
+    </table>
+  </div>
+
+  <!-- JavaScript (HTML, CSS, JS を1ファイルにまとめています) -->
   <script>
-    // 動的に Google Maps API を読み込む
+    // Google Maps API を動的に読み込む
     function loadGoogleMapsAPI() {
       const script = document.createElement("script");
       script.src = "https://maps.googleapis.com/maps/api/js?key=" +
@@ -65,25 +90,24 @@
     // グローバル変数
     let map;
     let selectedLatLng = null;
-    let funds = 10000;      // 初期所持金
-    const storeCost = 1000; // 店舗建設費
-    let stores = [];        // 各店舗の情報を格納する配列
+    let funds = 10000;
+    const storeCost = 1000;
+    let stores = []; // 各店舗のオブジェクトを格納
+    let dayCount = 1;
 
-    // お弁当タイプごとのデータ（仕入れコストと販売価格）
+    // お弁当の種類ごとのデータ（仕入れコストと販売価格）
     const bentoTypes = {
       "シンプル": { salePrice: 300, cost: 200 },
       "贅沢":   { salePrice: 500, cost: 400 },
       "健康":   { salePrice: 400, cost: 300 }
     };
 
-    // Google Maps の初期化（API の callback として呼ばれる）
+    // Google Maps の初期化
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
         center: { lat: 35.6895, lng: 139.6917 },
         zoom: 10
       });
-
-      // 地図クリックで位置を取得
       map.addListener("click", (e) => {
         selectedLatLng = e.latLng;
         document.getElementById("latlng").textContent =
@@ -93,7 +117,7 @@
       });
     }
 
-    // 店舗建設ボタンの処理
+    // 「お店を建てる」ボタンの処理
     document.getElementById("buildStore").addEventListener("click", () => {
       if (!selectedLatLng) {
         alert("まずは地図をクリックして位置を選んでください！");
@@ -105,8 +129,7 @@
       }
       funds -= storeCost;
       updateFunds();
-
-      // 新規店舗オブジェクトを作成（各店舗は個別の在庫と注文情報を持つ）
+      // 各店舗オブジェクト（注文と在庫、日次売上記録を初期化）
       const store = {
         marker: new google.maps.Marker({
           position: selectedLatLng,
@@ -114,112 +137,140 @@
           title: "お弁当屋さん"
         }),
         latLng: selectedLatLng,
-        // 各弁当の在庫（初期は 0 個）
         inventory: { "シンプル": 0, "贅沢": 0, "健康": 0 },
-        // 注文情報（次の日の仕入れ注文を設定するため）
-        order: null
+        orders: { "シンプル": 0, "贅沢": 0, "健康": 0 },
+        daily: { 
+          "シンプル": { sold: 0, discarded: 0 },
+          "贅沢": { sold: 0, discarded: 0 },
+          "健康": { sold: 0, discarded: 0 }
+        }
       };
       stores.push(store);
-
       document.getElementById("buildStore").disabled = true;
       document.getElementById("latlng").textContent = "なし";
       selectedLatLng = null;
-
       updateStoreStatus();
     });
 
-    // 所持金表示更新
+    // 所持金の表示更新
     function updateFunds() {
       document.getElementById("money").textContent = funds;
     }
 
-    // 各店舗の表示と、注文設定フォームの更新
+    // 各店舗の状況・注文設定の表示更新
     function updateStoreStatus() {
       const statusDiv = document.getElementById("storeStatus");
-      let html = "<h2>各店舗の仕入れ状況</h2>";
+      let html = "<h2>各店舗の状況・注文設定</h2>";
       if (stores.length === 0) {
         html += "<p>店舗はまだありません</p>";
       } else {
         stores.forEach((store, index) => {
           html += "<div class='store'>";
           html += "店舗 " + (index + 1) + "（緯度: " + store.latLng.lat().toFixed(4) +
-                  ", 経度: " + store.latLng.lng().toFixed(4) + "）<br>";
-          html += "在庫 - シンプル: " + store.inventory["シンプル"] + " 個, ";
+                  ", 経度: " + store.latLng.lng().toFixed(4) + ")<br>";
+          html += "現在の在庫: シンプル: " + store.inventory["シンプル"] + " 個, ";
           html += "贅沢: " + store.inventory["贅沢"] + " 個, ";
           html += "健康: " + store.inventory["健康"] + " 個<br>";
-          if (store.order) {
-            html += "【注文済み】 " + store.order.quantity + " 個の" + store.order.type + "弁当<br>";
-          } else {
-            // 注文フォーム（店舗単位）
-            html += "仕入れ注文: ";
-            html += "<select id='orderType" + index + "'>";
-            html += "<option value='シンプル'>シンプル弁当</option>";
-            html += "<option value='贅沢'>贅沢弁当</option>";
-            html += "<option value='健康'>健康弁当</option>";
-            html += "</select> ";
-            html += "<input type='number' id='orderQuantity" + index + "' value='0' min='0' style='width:60px;'> ";
-            html += "<button onclick='setOrder(" + index + ")'>注文確定</button>";
+          // 注文フォーム：各お弁当ごとに注文数量を入力
+          html += "仕入れ注文（次の日）：<br>";
+          for (let type in bentoTypes) {
+            html += type + "弁当: ";
+            html += "<input type='number' id='order_" + type + "_" + index + "' value='" + store.orders[type] + "' min='0' style='width:60px;'> ";
           }
+          html += "<button onclick='setOrder(" + index + ")'>注文確定</button>";
           html += "</div>";
         });
       }
       statusDiv.innerHTML = html;
     }
 
-    // 各店舗の注文を設定する関数（注文確定ボタン用）
+    // 注文確定ボタンの処理：店舗の注文を更新
     function setOrder(index) {
-      const orderType = document.getElementById("orderType" + index).value;
-      const orderQuantity = parseInt(document.getElementById("orderQuantity" + index).value, 10) || 0;
-      if (orderQuantity <= 0) {
-        alert("注文個数は0より大きい値を設定してください。");
-        return;
+      const store = stores[index];
+      for (let type in bentoTypes) {
+        const input = document.getElementById("order_" + type + "_" + index);
+        store.orders[type] = parseInt(input.value, 10) || 0;
       }
-      stores[index].order = { type: orderType, quantity: orderQuantity };
+      alert("店舗 " + (index + 1) + " の注文が確定しました。");
       updateStoreStatus();
     }
 
-    // 毎日（1分ごと）の処理：注文の仕入れと売上
+    // 日次処理：1分ごとに実施
     setInterval(() => {
-      // ① 各店舗ごとの注文を処理
+      // overallReport を初期化（全店舗合計）
+      let overallReport = {
+        "シンプル": { sold: 0, discarded: 0 },
+        "贅沢": { sold: 0, discarded: 0 },
+        "健康": { sold: 0, discarded: 0 },
+        totalSales: 0
+      };
+
+      // 各店舗で、注文に基づく仕入れを実施（購入に成功すれば、その日の在庫に設定）
       stores.forEach((store) => {
-        if (store.order) {
-          const orderType = store.order.type;
-          const orderQuantity = store.order.quantity;
-          const cost = bentoTypes[orderType].cost * orderQuantity;
-          if (funds >= cost) {
-            funds -= cost;
-            store.inventory[orderType] += orderQuantity;
-            console.log("店舗の注文処理: " + orderQuantity + " 個の " + orderType + " 弁当を購入（費用: " + cost + "円）");
+        for (let type in store.orders) {
+          const quantity = store.orders[type];
+          const purchaseCost = bentoTypes[type].cost * quantity;
+          if (funds >= purchaseCost) {
+            funds -= purchaseCost;
+            store.inventory[type] = quantity;
           } else {
-            console.log("店舗注文失敗：所持金不足（" + orderType + "注文）");
+            store.inventory[type] = 0;
           }
-          // 注文処理後、注文情報をリセット
-          store.order = null;
+          // 注文はリセット（再度注文可能）
+          store.orders[type] = 0;
+        }
+        updateFunds();
+      });
+
+      // 各店舗で売上処理：各お弁当ごとに、在庫に対してランダムな需要をシミュレート
+      stores.forEach((store) => {
+        for (let type in store.inventory) {
+          let available = store.inventory[type];
+          // 売れる個数：0～available のランダムな整数
+          let sold = Math.floor(Math.random() * (available + 1));
+          let discarded = available - sold;
+          // 各店舗の日次レポートに加算
+          store.daily[type].sold += sold;
+          store.daily[type].discarded += discarded;
+          overallReport[type].sold += sold;
+          overallReport[type].discarded += discarded;
+          overallReport.totalSales += sold * bentoTypes[type].salePrice;
+          // 在庫は廃棄（翌日リセット）
+          store.inventory[type] = 0;
         }
       });
+
+      // 売上収入を所持金に加算
+      funds += overallReport.totalSales;
       updateFunds();
       updateStoreStatus();
 
-      // ② 売上処理：各店舗ごとに、各弁当で在庫があれば1個ずつ販売
-      let totalIncome = 0;
-      stores.forEach((store) => {
-        for (let type in store.inventory) {
-          if (store.inventory[type] > 0) {
-            store.inventory[type]--;
-            totalIncome += bentoTypes[type].salePrice;
-          }
-        }
-      });
-      if (totalIncome > 0) {
-        funds += totalIncome;
-        updateFunds();
-        updateStoreStatus();
-        alert("1日経過！ 売上 " + totalIncome + " 円 が加算されました！");
-      } else {
-        alert("1日経過！ 在庫が不足しているため、売上はありませんでした。");
-      }
-    }, 60000); // 60000ミリ秒＝1分
+      // 日次レポートをテーブルに追加
+      appendDailyLog(dayCount, overallReport);
+      dayCount++;
+    }, 60000); // 1分ごと＝1日
 
+    // 日次レポートテーブルに行を追加
+    function appendDailyLog(day, report) {
+      const logTable = document.getElementById("logTable");
+      let row = logTable.insertRow(-1);
+      let cellDay = row.insertCell(0);
+      cellDay.textContent = day;
+      let cellSimpleSold = row.insertCell(-1);
+      cellSimpleSold.textContent = report["シンプル"].sold;
+      let cellSimpleDiscarded = row.insertCell(-1);
+      cellSimpleDiscarded.textContent = report["シンプル"].discarded;
+      let cellLuxSold = row.insertCell(-1);
+      cellLuxSold.textContent = report["贅沢"].sold;
+      let cellLuxDiscarded = row.insertCell(-1);
+      cellLuxDiscarded.textContent = report["贅沢"].discarded;
+      let cellHealthSold = row.insertCell(-1);
+      cellHealthSold.textContent = report["健康"].sold;
+      let cellHealthDiscarded = row.insertCell(-1);
+      cellHealthDiscarded.textContent = report["健康"].discarded;
+      let cellTotalSales = row.insertCell(-1);
+      cellTotalSales.textContent = report.totalSales;
+    }
   </script>
 </body>
 </html>
